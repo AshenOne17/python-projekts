@@ -3,23 +3,21 @@ from scapy.layers.dhcp import BOOTP, DHCP
 from scapy.layers.inet import IP, UDP
 from scapy.layers.l2 import Ether
 import random
+import time
 
 # Es werden dann auch die Pakete, die nicht an lokale IP-Addresse kommen, akzeptiert
 conf.checkIPaddr = False
-
-# Ergebnis
-
 #--------------------MAC-Hilfsfunktionen--------------------
-
 # Random MAC Adresse Generator
 def mac_gen():
+    first = (random.randint(0, 255) | 0x02) & 0xFE  # lokal, unicast
     return "%02x:%02x:%02x:%02x:%02x:%02x" % (
-            random.randint(0, 255),
-            random.randint(0, 255),
-            random.randint(0, 255),
-            random.randint(0, 255),
-            random.randint(0, 255),
-            random.randint(0, 255)
+        first,
+        random.randint(0, 255),
+        random.randint(0, 255),
+        random.randint(0, 255),
+        random.randint(0, 255),
+        random.randint(0, 255),
     )
 #--------------------D(DISCOVERY)-O(OFFER)--------------------
 def discover_dhcp(mac, iface_user):
@@ -34,7 +32,7 @@ def discover_dhcp(mac, iface_user):
     )
 
     print(f"Sending DHCP Discover with MAC: {mac}")
-    sendp(discover_packet, iface=iface_user, verbose=1)
+    sendp(discover_packet, iface=iface_user, verbose=0)
 
     # Dictionary für Antwortdaten
     offer = {}
@@ -98,18 +96,28 @@ def request_dhcp(mac, request_offer, iface_user, hostname="artem_nine_dhcp"):
     response_received = False
     # Callback-Funktion für jedes Paket
     def handle_ack(pkt):
-        # Die Variablen sind aus der äusseren Funktion und werden verändert
         nonlocal ack, response_received
-        # Filter, um richtige Pakete zu finden (ist es DHCP, Transaktionscheck, Nachtichtentyp)
-        if (DHCP in pkt and BOOTP in pkt and pkt[BOOTP].xid == xid):  # 5 - acknowledge
-            ack = {
-                "server_ip": pkt[IP].src,
-                "leased_ip": pkt[BOOTP].yiaddr,
-                "xid": pkt[BOOTP].xid,
-                "mac": mac
-            }
-            print(f"Lease ACK erforderlich: {ack['leased_ip']} from {ack['server_ip']}")
-            response_received = True
+        if DHCP in pkt and BOOTP in pkt and pkt[BOOTP].xid == xid:
+            # DHCP-Optionen zu Dict
+            try:
+                opts = dict(o for o in pkt[DHCP].options if isinstance(o, tuple))
+            except Exception:
+                opts = {}
+
+            msg_type = opts.get("message-type")
+            yi = pkt[BOOTP].yiaddr
+            src_ip = pkt[IP].src if IP in pkt else "0.0.0.0"
+
+            # Nur gültiges ACK akzeptieren: msg_type 5 und eine „echte“ yiaddr
+            if msg_type == 5 and yi != "0.0.0.0":
+                ack = {
+                    "server_ip": src_ip,
+                    "leased_ip": yi,
+                    "xid": pkt[BOOTP].xid,
+                    "mac": mac,
+                }
+                print(f"Lease ACK erhalten: {yi} von {src_ip}")
+                response_received = True
 
     sniffer = AsyncSniffer(
         # BPF Filter, um nur UDP zu verwenden
@@ -123,11 +131,9 @@ def request_dhcp(mac, request_offer, iface_user, hostname="artem_nine_dhcp"):
     print(f"Sending DHCP Request for {requested_ip} to server {server_ip}")
     print("Listening for DHCP ACK...")
     sniffer.start()
-    sendp(request_packet, iface=iface_user, verbose=1)
-    for _ in range(50):  # 50 * 0.1s = 5 Sekunden
-        if response_received:
-            break
-        time.sleep(0.1)
+    time.sleep(1)
+    sendp(request_packet, iface=iface_user, verbose=0)
+    time.sleep(1)
     sniffer.stop()
     return ack if ack else None
 #--------------------DHCP-RELEASE--------------------
@@ -147,7 +153,7 @@ def release_dhcp(mac_release, lease_release, iface_user):
     print(f"Sending DHCP Release for {leased_ip} to server {server_ip}")
     sendp(release_packet, iface=iface_user, verbose=1)
 #--------------------DHCP-Bulk-DORA--------------------
-def bulk_lease_dhcp(iface_user, lease_num):
+def bulk_lease_dhcp(lease_num, iface_user):
     print(f"Starte DHCP-Discover für {lease_num} Leases.")
 
     successful_leases = []
@@ -155,7 +161,7 @@ def bulk_lease_dhcp(iface_user, lease_num):
     failed_lease_count = 0
 
     for i in range (lease_num):
-        print(f"\n---Lease {i+1}/{num_leases}---")
+        print(f"\n---Lease {i+1}/{lease_num}---")
         mac = mac_gen()
         print(f"Verwende MAC: {mac}")
         offer = discover_dhcp(mac, iface_user)
@@ -167,18 +173,20 @@ def bulk_lease_dhcp(iface_user, lease_num):
 
         lease = request_dhcp(mac, offer, iface_user, f"client-{i+1}")
         if lease:
-            print(f"Lease {i+1} erfolgreich: {lease['leased_ip']}")
             successful_leases.append(lease)
+            print(f"Lease {i+1} erfolgreich: {lease['leased_ip']}")
         else:
             print(f"Lease {i+1} fehlgeschlagen!")
             failed_lease_count += 1
 
-    time.sleep(1)
+        time.sleep(1)
 
     print("---Zusammenfassung---")
-    print(f"Anzahl der erfolgreichen Leases:{len(successful_leases)}")
+    print(f"Anzahl der erfolgreichen Leases: {len(successful_leases)}")
     print(f"Anzahl der fehlgeschlagenen Offers: {failed_offer_count}")
     print(f"Anzahl der fehlgeschlagenen Leases: {failed_lease_count}")
+
+    return successful_leases
 #--------------------DHCP-Bulk-Release--------------------
 def bulk_release_dhcp(leases_release, iface_release):
     if not leases_release:
@@ -188,7 +196,7 @@ def bulk_release_dhcp(leases_release, iface_release):
     print(f"Release für {len(leases_release)} Leases.")
 
     for i, lease in enumerate(leases_release):
-        print(f"Release {i+1}/{len(leases_release)}: {leases_release['leased_ip']}")
+        print(f"Release {i+1}/{len(leases_release)}: {lease['leased_ip']}")
         release_dhcp(lease["mac"], lease, iface_release)
         time.sleep(1)
 
@@ -198,12 +206,12 @@ iface = "ASIX USB to Gigabit Ethernet Family Adapter"
 """single_lease = {
     "xid": 96301497,
     "server_ip": "10.16.0.1",
-    "leased_ip": "10.16.1.64",
-    "mac": "5E:CC:FC:1C:B0:E1"
+    "leased_ip": "10.16.1.21",
+    "mac":       "8A:F7:68:9E:09:BA"
 }"""
 single_lease = None
-bulk_lease = []
-fake_mac = "0A:3A:43:9F:DE:1C"
+current_bulk_leases = []
+#fake_mac = "0A:3A:43:9F:DE:1C"
 while True:
     print('\n---DHCP Menu---')
     print('\n1. Einzelner DHCP Request')
@@ -233,14 +241,18 @@ while True:
             print("Kein aktiver Lease vorhanden.")
 
     elif choice == "3":
-        num_leases = int(input("Geben Sie den Anzahl der Leases: "))
-        if num_leases <= 0:
-            print("Keine Anzahl der Leases erfolgreich. Es muss mehr als 0 sein!")
-        bulk_leases = bulk_lease_dhcp(iface, num_leases)
+        try:
+            num_leases = int(input("Anzahl der Leases: "))
+            if num_leases <= 0:
+                print("Anzahl muss größer als 0 sein!")
+                continue
+            current_bulk_leases = bulk_lease_dhcp(num_leases, iface)
+        except ValueError:
+            print("Bitte gültige Zahl eingeben!")
 
     elif choice == "4":
-        if bulk_lease:
-            bulk_release_dhcp(bulk_lease, iface)
+        if current_bulk_leases:
+            bulk_release_dhcp(current_bulk_leases, iface)
         else:
             print("Keine Bulke-Leases vorgegeben.")
 
@@ -250,5 +262,3 @@ while True:
 
     else:
         print("Ungültige Eingabe.")
-
-
