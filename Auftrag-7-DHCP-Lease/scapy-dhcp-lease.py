@@ -1,5 +1,3 @@
-from IPython.terminal.shortcuts.auto_match import single_quote
-from prometheus_client.parser import replace_escape_sequence
 from scapy.all import *
 from scapy.layers.dhcp import BOOTP, DHCP
 from scapy.layers.inet import IP, UDP
@@ -55,7 +53,7 @@ def discover_dhcp(mac, iface_user):
                 "offered_ip": pkt[BOOTP].yiaddr,
                 "xid": pkt[BOOTP].xid,
             }
-            print(f"Offer received: server {pkt[IP].src}, offered {pkt[BOOTP].yiaddr}, xid {pkt[BOOTP].xid}")
+            print(f"Offer received: server {pkt[IP].src}, offered {pkt[BOOTP].yiaddr}")
             response_received = True
             return True
 
@@ -66,7 +64,7 @@ def discover_dhcp(mac, iface_user):
         iface=iface_user,
         # Für jedes Paket, das BPF Filter entspricht, handle_pkt() ausführen
         prn=handle_pkt,
-        timeout=15,
+        timeout=10,
         # Nach jedem Paket prüft sniff(), ob True zurückgegeben wurde, wenn ja, dann hört es auf
         stop_filter=lambda x: response_received,
         # Ressourcen sparen
@@ -156,18 +154,18 @@ def bulk_lease_dhcp(iface_user, lease_num):
     failed_offer_count = 0
     failed_lease_count = 0
 
-    mac = mac_gen()
-    print(f"DHCP-Discover für {mac} MAC-Addresse.")
-
     for i in range (lease_num):
+        print(f"\n---Lease {i+1}/{num_leases}---")
+        mac = mac_gen()
+        print(f"Verwende MAC: {mac}")
         offer = discover_dhcp(mac, iface_user)
 
         if not offer:
-            print(f"Kein DHCP-Offer für {mac} MAC-Addresse erhalten!")
+            print(f"Kein DHCP-Offer für Lease {i+1} erhalten.")
             failed_lease_count += 1
+            continue
 
-        lease = request_dhcp(mac, offer, iface_user, hostname=f"client-{i+1}")
-
+        lease = request_dhcp(mac, offer, iface_user, f"client-{i+1}")
         if lease:
             print(f"Lease {i+1} erfolgreich: {lease['leased_ip']}")
             successful_leases.append(lease)
@@ -196,21 +194,16 @@ def bulk_release_dhcp(leases_release, iface_release):
 
     print("Alle Leases released.")
 #--------------------MAIN--------------------
-"""fake_mac_static = "a2:b3:c4:55:66:77"
 iface = "ASIX USB to Gigabit Ethernet Family Adapter"
-lease = None
-lease = {
+"""single_lease = {
     "xid": 96301497,
     "server_ip": "10.16.0.1",
-    "leased_ip": "10.16.2.52",
+    "leased_ip": "10.16.1.64",
+    "mac": "5E:CC:FC:1C:B0:E1"
 }"""
-
-"""release_dhcp(fake_mac_static, lease, iface)"""
-
-iface = "ASIX USB to Gigabit Ethernet Family Adapter"
 single_lease = None
 bulk_lease = []
-
+fake_mac = "0A:3A:43:9F:DE:1C"
 while True:
     print('\n---DHCP Menu---')
     print('\n1. Einzelner DHCP Request')
@@ -236,7 +229,6 @@ while True:
     elif choice == "2":
         if single_lease:
             release_dhcp(single_lease["mac"], single_lease, iface)
-            single_lease = None
         else:
             print("Kein aktiver Lease vorhanden.")
 
@@ -244,12 +236,18 @@ while True:
         num_leases = int(input("Geben Sie den Anzahl der Leases: "))
         if num_leases <= 0:
             print("Keine Anzahl der Leases erfolgreich. Es muss mehr als 0 sein!")
-        bulk_leases = bulk_lease_dhcp()
+        bulk_leases = bulk_lease_dhcp(iface, num_leases)
 
+    elif choice == "4":
+        if bulk_lease:
+            bulk_release_dhcp(bulk_lease, iface)
+        else:
+            print("Keine Bulke-Leases vorgegeben.")
 
     elif choice == "5":
-        print("Ciao")
+        print("Ciao!")
         break
+
     else:
         print("Ungültige Eingabe.")
 
