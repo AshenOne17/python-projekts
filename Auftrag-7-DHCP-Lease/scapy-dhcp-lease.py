@@ -4,13 +4,17 @@ from scapy.layers.inet import IP, UDP
 from scapy.layers.l2 import Ether
 import random
 import time
+import pyx
 
-# Es werden dann auch die Pakete, die nicht an lokale IP-Addresse kommen, akzeptiert
+# Deaktiviert die Prüfung, ob eingehende Pakete an die lokale IP-Adresse gerichtet sind
+# (erlaubt Empfang von DHCP-Broadcast-Antworten)
 conf.checkIPaddr = False
 #--------------------MAC-Hilfsfunktionen--------------------
 # Random MAC Adresse Generator
 def mac_gen():
-    first = (random.randint(0, 255) | 0x02) & 0xFE  # lokal, unicast
+    # Generiert erstes Byte der MAC: Setzt Bit 1 (lokal administriert) und löscht Bit 0 (unicast, nicht multicast)
+    first = (random.randint(0, 255) | 0x02) & 0xFE
+    # %02x = 2-stellige Hexadezimalzahl mit führenden Nullen
     return "%02x:%02x:%02x:%02x:%02x:%02x" % (
         first,
         random.randint(0, 255),
@@ -32,6 +36,8 @@ def discover_dhcp(mac, iface_user):
     )
 
     print(f"Sending DHCP Discover with MAC: {mac}")
+    print("-----Discover-Paket-Dump-----")
+    discover_packet.pdfdump("discover.pdf")
     sendp(discover_packet, iface=iface_user, verbose=0)
 
     # Dictionary für Antwortdaten
@@ -86,7 +92,8 @@ def request_dhcp(mac, request_offer, iface_user, hostname="artem_nine_dhcp"):
             ("message-type", "request"),
             ("server_id", server_ip),
             ("requested_addr", requested_ip),
-            ("hostname", hostname), # Lease time - max. 5 Tage
+            ("hostname", hostname),
+            ("lease_time", 3600), # Lease time - max. 5 Tage
             "end"
         ])
     )
@@ -116,6 +123,7 @@ def request_dhcp(mac, request_offer, iface_user, hostname="artem_nine_dhcp"):
                     "xid": pkt[BOOTP].xid,
                     "mac": mac,
                 }
+                pkt.pdfdump("ack.pdf")
                 print(f"Lease ACK erhalten: {yi} von {src_ip}")
                 response_received = True
 
@@ -206,8 +214,8 @@ iface = "ASIX USB to Gigabit Ethernet Family Adapter"
 """single_lease = {
     "xid": 96301497,
     "server_ip": "10.16.0.1",
-    "leased_ip": "10.16.1.21",
-    "mac":       "8A:F7:68:9E:09:BA"
+    "leased_ip": "10.16.1.180",
+    "mac":       "46:01:35:2F:08:46"
 }"""
 single_lease = None
 current_bulk_leases = []

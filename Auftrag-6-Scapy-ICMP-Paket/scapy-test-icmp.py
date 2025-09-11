@@ -5,6 +5,7 @@ packet = IP(dst='10.16.0.1') / ICMP()
 answer = sr1(packet)
 timestamp = answer.time - packet.sent_time
 print(f"{(timestamp*1000):.2f} ms")
+packet.pdfdump("ICMP.pdf")
 
 """import subprocess
 import re
