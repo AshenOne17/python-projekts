@@ -1,10 +1,10 @@
 from scapy.all import *
 from scapy.layers.inet import ICMP, IP
 
-packet = IP(dst='10.16.0.1') / ICMP()
+packet = IP(dst='10.0.1.1') / ICMP()
 answer = sr1(packet)
 timestamp = answer.time - packet.sent_time
-print(f"{(timestamp*1000):.2f} ms")
+print(f"{(timestamp * 1000):.2f} ms")
 packet.pdfdump("ICMP.pdf")
 
 """import subprocess
