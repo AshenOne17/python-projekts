@@ -1,5 +1,4 @@
 import requests
-import flask
 from flask import Flask, request
 
 def check_server(target):
@@ -35,11 +34,13 @@ def get_json_key(url, key):
 app = Flask(__name__)
 # Decorator für eine Route - Zuordnung der HTTP-Anfrage mit Methoden
 # Handelt sich um der erste Route
+# homepage/healthcheck
 @app.route('/', methods=['GET'])
 def root():
     # JSON Bestätigungsachricht
     return {"message": "Server ist aktiv", "method": "GET"}
 
+# JSON endpoints that clients/scripts call
 @app.route('/api', methods=['GET','POST'])
 def api():
     if request.method == 'GET':

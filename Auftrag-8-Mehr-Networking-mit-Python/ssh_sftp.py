@@ -5,7 +5,7 @@ import paramiko
 def ssh_single_command(hostname, username, password, command):
     # SSH Objekt erstellen
     ssh = paramiko.SSHClient()
-    # Automatisch unbekannte Host-Keys akzeptieren
+    # Automatisch unbekannte Host-Keys akzeptieren (nur zum Testen)
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
     try:
@@ -126,6 +126,6 @@ def sftp_connection(hostname, username, password):
         sftp.close()
         ssh.close()
 
-# ssh_single_command("10.16.0.12", "admin-pi2", "admin@pi2", "systemctl status apache2.service")
+ssh_single_command("10.16.0.12", "admin-pi2", "admin@pi2", "systemctl status apache2.service")
 # ssh_multiple_commands("10.16.0.12", "admin-pi2", "admin@pi2", ["cd /var/www", "ls -la"])
 # sftp_connection("10.16.0.12", "admin-pi2", "admin@pi2")
