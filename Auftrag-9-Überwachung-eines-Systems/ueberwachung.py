@@ -1,59 +1,114 @@
-import socket
-import requests
-import paramiko
-import scapy
-expected_list = {"ssh": True, "http": True, "https": True, "sftp:": True,
-                 "dns": False, "dhcp": False}
+import socket # Netzwerkverbindungen
+import json
+import time # sleep() zwischen Scans
+from datetime import datetime
 
-# TCP Verfügbarkeit
-def tcp_connect(host:str, port: int, timeout:int=2) -> tuple[bool, str]:
-    try:
-        # Baut TCP-Verbindung um zu prüfen, ob der Port erreichbar ist
-        with socket.create_connection((host, port), timeout=timeout):
-            return True, "connected"
-    except socket.timeout:
-        return False, "timeout"
+DEFAULT_HOST = "pi2.cyber"
 
-# Verbindungsprüfen mit TCP auf Port 22
-def ssh_check(host:str, port:int, timeout:int=2) -> tuple[bool, str]:
+# Erwartete Services
+EXPECTED = {
+    "ssh": True,
+    "http": True,
+    "https": True,
+    "sftp": True,  # gleich wie SSH
+    "dns": False,
+    "dhcp": False
+}
+
+# Vordefinierte Ports
+PORTS = {
+    "ssh": 22,
+    "http": 80,
+    "https": 443,
+    "sftp": 22,
+    "dns": 53, # 59587 - FALSE
+    "dhcp": 67
+}
+
+def check_port(host, port):
+    # Überprüft, ob Port auf dem Remote Host offen ist
     try:
-        # Baut TCP-Verbindung zu Port 22.
-        with socket.create_connection((host, port), timeout=timeout) as s:
-            # Setzt Lese-/Schreib-Timeout für den Socket.
-            s.settimeout(timeout)
-            try:
-                # Liest bis zu 256 Bytes, dekodiert als Text, trimmt Whitespace.
-                banner = s.recv(256).decode(errors="ignore").strip()
-            except Exception:
-                banner = ""
-            if banner.startswith("SSH-"):
-                return True, banner
-            try:
-                # Manche Server senden Banner nach dem Client-Antwort
-                # Das ist ein zusätzliches Überprüfen
-                s.sendall(b"\n")
-                banner2 = s.recv(256).decode(errors="ignore").strip()
-                if banner2.startswith("SSH-"):
-                    return True, banner2
-            except Exception:
-                pass
-            return False, banner
+        # TCP Socket erstellen
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(3)
+        result = sock.connect_ex((host, port))
+        sock.close()
+        # Wenn Verbindung erfolgreich ist (0), True zurückgeben
+        return result == 0
     except Exception as e:
-        return False, str(e)
+        print(f"Error checking {host}:{port} - {e}")
+        return False
 
-# TLS für Sicherheit bei HTTPS
-# Hauptfunktion für allgemeine Checks (wird unter http_on_host/https_on_host gewrapped)
-def http_check(url: str, timeout:int=2, tls:bool=True) -> tuple[bool, str]:
+def test_hostname(host):
+    # Versucht, Hostname zu lösen
     try:
-        req = requests.get(url, timeout=timeout, verify=tls)
-        return True, f"{req.status_code} ({req.reason})"
+        # Hostname zu IP-Adresse auflösen
+        ip = socket.gethostbyname(host)
+        print(f"Hostname '{host}' resolves to {ip}")
+        return True
     except Exception as e:
-        return False, str(e)
+        print(f"Cannot resolve hostname '{host}': {e}")
+        return False
 
-# Hilfsfunktion für HTTP Check
-def http_on_host(host:str, timeout:int=2) -> tuple[bool, str]:
-    return http_check(f"http://{host}", timeout=timeout, tls=True)
+def scan_system(host):
+    # Geht durch alle Services auf Remote Host
+    services = {}
 
-# Hilfsfunktion für HTTPS Check
-def https_on_host(host:str, timeout:int=2, insecure=False) -> tuple[bool, str]:
-    return http_check(f"https://{host}", timeout=timeout, tls=not insecure)
+    for service in EXPECTED:
+        port = PORTS[service]
+        actual = check_port(host, port)
+        services[service] = {
+            "expected": EXPECTED[service],
+            "actual": actual
+        }
+
+    report = {
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f"),
+        "services": services
+    }
+
+    return report
+
+def save_report(report):
+    # Speichert Resultat im JSON Datei
+    filename = "reports.json"
+
+    # Ladet existierte Reports
+    try:
+        with open(filename, "r") as f:
+            reports = json.load(f)
+    # Initialisieren Datei, wenn es noch nicht existiert
+    except (FileNotFoundError, json.JSONDecodeError):
+        reports = []
+    # Speichert neues Report
+    reports.append(report)
+    # Speichert zurück im Datei
+    with open(filename, "w") as f:
+        json.dump(reports, f, indent=2)
+
+host = "pi2.cyber"
+
+print(f"Starting monitoring of {host}")
+print(f"Scan interval: 5 seconds")
+# Teste Hostname zuerst
+if not test_hostname(host):
+    print("Try using the Pi's IP address instead:")
+    print(f"python3 monitor.py 192.168.1.XXX")
+    exit()
+
+try:
+    while True:
+        report = scan_system(host)
+        save_report(report)
+
+        print(f"\nScan at {report['timestamp']}:")
+        alerts = 0
+        for service, status in report['services'].items():
+            expected = status['expected']
+            actual = status['actual']
+            print(f"{service}: expected={expected}, actual={actual}")
+
+        time.sleep(5)
+
+except KeyboardInterrupt:
+    print("\nMonitoring stopped.")
